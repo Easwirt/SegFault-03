@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Agent</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🤖 AI Agent</h1>
+            <p class="subtitle">Powered by LangGraph</p>
+            <div class="header-buttons">
+                <button type="button" id="mcp-btn" class="mcp-btn" title="Manage MCP Servers">
+                    🔌 MCP
+                </button>
+                <button type="button" id="new-chat-btn" class="new-chat-btn hidden">
+                    + New Chat
+                </button>
+            </div>
+        </header>
+
+        <main>
+            <!-- Chat Messages Container -->
+            <div id="chat-container" class="chat-container">
+                <!-- Messages will be added here dynamically -->
+            </div>
+
+            <!-- Input Section (always visible at bottom) -->
+            <form id="chat-form" class="input-section" onsubmit="return false;">
+                <textarea 
+                    id="prompt-input" 
+                    placeholder="Enter your request... (e.g., 'Search for the latest news about AI and write a summary')"
+                    rows="2"
+                ></textarea>
+                <button type="button" id="generate-btn">
+                    <span class="btn-text">Send</span>
+                    <span class="btn-loader hidden"></span>
+                </button>
+            </form>
+        </main>
+
+        <footer>
+            <p>Built with FastAPI + LangGraph</p>
+        </footer>
+    </div>
+
+    <!-- MCP Server Management Modal -->
+    <div id="mcp-modal" class="modal hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>🔌 MCP Server Management</h2>
+                <button type="button" class="modal-close" id="mcp-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- Add Server Form -->
+                <div class="mcp-add-form">
+                    <h3>Add MCP Server</h3>
+                    <div class="form-group">
+                        <label for="mcp-name">Server Name</label>
+                        <input type="text" id="mcp-name" placeholder="my-server" />
+                    </div>
+                    <div class="form-group">
+                        <label for="mcp-url">Server URL</label>
+                        <input type="text" id="mcp-url" placeholder="http://localhost:3000" />
+                    </div>
+                    <div class="form-group">
+                        <label for="mcp-description">Description (optional)</label>
+                        <input type="text" id="mcp-description" placeholder="My custom MCP server" />
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" id="mcp-test-btn" class="btn-secondary">
+                            Test Connection
+                        </button>
+                        <button type="button" id="mcp-add-btn" class="btn-primary">
+                            Add Server
+                        </button>
+                    </div>
+                    <div id="mcp-add-status" class="mcp-status hidden"></div>
+                </div>
+
+                <!-- Connected Servers List -->
+                <div class="mcp-servers-list">
+                    <h3>Connected Servers</h3>
+                    <div id="mcp-servers-container">
+                        <p class="no-servers">No MCP servers connected</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
