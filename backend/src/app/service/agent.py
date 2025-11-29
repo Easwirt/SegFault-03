@@ -1,16 +1,17 @@
 import os
-import operator
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from typing import Annotated, List, Dict, TypedDict, Union
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END
-from fpdf import FPDF
 from ddgs import DDGS
 from dotenv import load_dotenv
+from app.service.mcp_client import mcp_manager
 
-# --- 1. Setup & Configuration ---
-# Load environment variables from .env file
+
 load_dotenv()
 
 # Ensure API key is set
@@ -18,6 +19,15 @@ if not os.getenv("OPENAI_API_KEY"):
     print("Warning: OPENAI_API_KEY not found in environment. Please check .env file.")
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+
+# Thread pool for running sync tools
+executor = ThreadPoolExecutor(max_workers=4)
+
+
+# Helper function to run tool synchronously
+def run_tool_sync(tool_func, tool_input):
+    """Run a tool synchronously - to be called in thread pool"""
+    return tool_func.invoke(tool_input)
 
 # --- 2. Define Tools ---
 @tool
@@ -39,31 +49,6 @@ def search_web(query: str) -> str:
     except Exception as e:
         return f"Error searching web: {e}"
 
-@tool
-def write_file(filename: str, content: str) -> str:
-    """Useful for writing a file to disk. Arguments: filename, content."""
-    print(f"    [Tool] Writing file: {filename}")
-    try:
-        if filename.lower().endswith('.pdf'):
-            pdf = FPDF()
-            pdf.add_page()
-            pdf.set_font("Arial", size=12)
-            
-            # Handle text content line by line
-            # Note: Standard FPDF fonts only support Latin-1. 
-            # We replace unsupported characters to prevent errors.
-            for line in content.split('\n'):
-                safe_line = line.encode('latin-1', 'replace').decode('latin-1')
-                pdf.multi_cell(0, 10, txt=safe_line)
-                
-            pdf.output(filename)
-            return f"Successfully wrote PDF to {filename}"
-        else:
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(content)
-            return f"Successfully wrote to {filename}"
-    except Exception as e:
-        return f"Error writing file: {e}"
 
 @tool
 def read_file(filename: str) -> str:
@@ -75,33 +60,23 @@ def read_file(filename: str) -> str:
     except Exception as e:
         return f"Error reading file: {e}"
 
-@tool
-def convert_to_pdf(source_file: str, dest_file: str) -> str:
-    """Useful for converting a text file to a PDF file. Arguments: source_file, dest_file."""
-    print(f"    [Tool] Converting {source_file} to {dest_file}")
-    try:
-        if not os.path.exists(source_file):
-            return f"Error: Source file {source_file} does not exist."
-            
-        with open(source_file, "r", encoding="utf-8") as f:
-            content = f.read()
-            
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", size=12)
-        
-        # Handle text content line by line
-        for line in content.split('\n'):
-            # Replace unsupported characters to prevent errors (basic FPDF limitation)
-            safe_line = line.encode('latin-1', 'replace').decode('latin-1')
-            pdf.multi_cell(0, 10, txt=safe_line)
-            
-        pdf.output(dest_file)
-        return f"Successfully converted {source_file} to {dest_file}"
-    except Exception as e:
-        return f"Error converting file: {e}"
+# Base tools (always available)
+base_tools = [search_web, read_file]
 
-tools = [search_web, write_file, read_file, convert_to_pdf]
+def get_all_tools():
+    """Get all tools including MCP tools"""
+    all_tools = list(base_tools)
+    mcp_tools = mcp_manager.get_tools()
+    all_tools.extend(mcp_tools)
+    return all_tools
+
+def get_tools_map():
+    """Get tools map including MCP tools"""
+    all_tools = get_all_tools()
+    return {t.name: t for t in all_tools}
+
+# Initial tools (will be updated when MCP servers are added)
+tools = base_tools
 tools_map = {t.name: t for t in tools}
 
 # --- 3. Define State ---
@@ -114,7 +89,7 @@ class AgentState(TypedDict):
 
 # --- 4. Define Nodes ---
 
-def planner_node(state: AgentState):
+async def planner_node(state: AgentState):
     print("\n--- 1. PLANNING ---")
     request = state["request"]
     
@@ -128,7 +103,7 @@ def planner_node(state: AgentState):
         SystemMessage(content=system_prompt),
         HumanMessage(content=request)
     ]
-    response = llm.invoke(messages)
+    response = await llm.ainvoke(messages)
     
     # Parse the plan
     plan = [line.strip("- ").strip() for line in response.content.split("\n") if line.strip()]
@@ -139,7 +114,7 @@ def planner_node(state: AgentState):
         
     return {"plan": plan, "current_task_index": 0, "results": {}}
 
-def executor_node(state: AgentState):
+async def executor_node(state: AgentState):
     print("\n--- 2. EXECUTING ---")
     plan = state["plan"]
     index = state["current_task_index"]
@@ -151,8 +126,12 @@ def executor_node(state: AgentState):
     # Context for the agent to make decisions
     context = "\n".join([f"Task: {k}\nResult: {v}" for k, v in results.items()])
     
+    # Get current tools including any MCP tools
+    current_tools = get_all_tools()
+    current_tools_map = get_tools_map()
+    
     # Ask LLM which tool to use
-    tools_description = "\n".join([f"{t.name}: {t.description}" for t in tools])
+    tools_description = "\n".join([f"{t.name}: {t.description}" for t in current_tools])
     system_prompt = f"""You are an execution agent. You have the following tools:
 {tools_description}
 
@@ -163,21 +142,17 @@ You have access to the results of previous tasks:
 Based on the task, decide which tool to use.
 - If you need to search, use 'search_web'.
 - If you need to read a file, use 'read_file'.
-- If you need to write a file (like a report or code), use 'write_file'.
-- If you need to convert a text file to PDF, use 'convert_to_pdf'.
 - If you can answer directly without a tool (e.g. summarizing), return 'ANSWER: <your content>'.
 
 Return your response in the format: TOOL_NAME: ARGUMENT
 Example: search_web: python 3.13 features
 Example: read_file: data.txt
-Example: write_file: report.txt, This is the content...
-Example: convert_to_pdf: report.txt, report.pdf
 """
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=f"Execute this task: {current_task}")
     ]
-    response = llm.invoke(messages)
+    response = await llm.ainvoke(messages)
     content = response.content.strip()
     
     task_result = ""
@@ -189,19 +164,30 @@ Example: convert_to_pdf: report.txt, report.pdf
         action = action.strip()
         arg = arg.strip()
         
-        if action in tools_map:
-            tool_func = tools_map[action]
+        if action in current_tools_map:
+            tool_func = current_tools_map[action]
             try:
-                # Handle multi-argument tools
-                if action == "write_file" and "," in arg:
-                    fname, fcontent = arg.split(",", 1)
-                    task_result = tool_func.invoke({"filename": fname.strip(), "content": fcontent.strip()})
-                elif action == "convert_to_pdf" and "," in arg:
-                    src, dst = arg.split(",", 1)
-                    task_result = tool_func.invoke({"source_file": src.strip(), "dest_file": dst.strip()})
+                # Check if it's an MCP tool (has coroutine)
+                if hasattr(tool_func, 'coroutine') and tool_func.coroutine:
+                    # MCP tools are async, call directly
+                    task_result = await tool_func.coroutine(**{'arguments': arg} if action.startswith('mcp_') else {})
+                    if not task_result or task_result == '{}':
+                        # Fallback to sync invocation
+                        loop = asyncio.get_running_loop()
+                        task_result = await loop.run_in_executor(
+                            executor,
+                            partial(run_tool_sync, tool_func, arg)
+                        )
                 else:
-                    task_result = tool_func.invoke(arg)
+                    # Run tool in thread pool to avoid blocking
+                    loop = asyncio.get_running_loop()
+                    task_result = await loop.run_in_executor(
+                        executor,
+                        partial(run_tool_sync, tool_func, arg)
+                    )
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 task_result = f"Error executing tool: {e}"
         elif action == "ANSWER":
             task_result = arg
@@ -219,7 +205,7 @@ Example: convert_to_pdf: report.txt, report.pdf
     return {"results": new_results, "current_task_index": index + 1}
 
 
-def responder_node(state: AgentState):
+async def responder_node(state: AgentState):
     print("\n--- 3. FINAL ANSWER ---")
     request = state["request"]
     results = state["results"]
@@ -228,7 +214,7 @@ def responder_node(state: AgentState):
         SystemMessage(content="You are a helpful assistant. Synthesize the results of the executed tasks into a final answer for the user."),
         HumanMessage(content=f"Original Request: {request}\n\nTask Results: {results}")
     ]
-    response = llm.invoke(messages)
+    response = await llm.ainvoke(messages)
     
     return {"final_answer": response.content}
 
@@ -251,33 +237,3 @@ workflow.add_conditional_edges("executor", should_continue)
 workflow.add_edge("responder", END)
 
 app = workflow.compile()
-
-# --- 6. Run ---
-if __name__ == "__main__":
-    print("=== AI Agent Started (Type 'exit' to quit) ===")
-    
-    while True:
-        try:
-            user_input = input("\nEnter your request: ").strip()
-            
-            if user_input.lower() in ["exit", "quit", "q"]:
-                print("Goodbye!")
-                break
-                
-            if not user_input:
-                continue
-                
-            print(f"Processing Request: {user_input}")
-            
-            inputs = {"request": user_input}
-            final_state = app.invoke(inputs)
-            
-            print("\n=== FINAL ANSWER ===")
-            print(final_state["final_answer"])
-            print("====================")
-            
-        except KeyboardInterrupt:
-            print("\nGoodbye!")
-            break
-        except Exception as e:
-            print(f"\nAn error occurred: {e}")
