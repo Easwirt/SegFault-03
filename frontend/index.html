@@ -4,18 +4,58 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Agent</title>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Use /static/ prefix when served from FastAPI backend -->
+    <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
+    <!-- Sidebar for Chat History & Projects -->
+    <aside id="sidebar" class="sidebar">
+        <div class="sidebar-header">
+            <h2>📁 Projects</h2>
+            <button type="button" id="toggle-sidebar-btn" class="toggle-sidebar-btn" title="Toggle Sidebar">
+                ◀
+            </button>
+        </div>
+        
+        <!-- Project Selection -->
+        <div class="project-section">
+            <div class="project-header">
+                <select id="project-select" class="project-select">
+                    <option value="default">Default Project</option>
+                </select>
+                <button type="button" id="new-project-btn" class="icon-btn" title="New Project">+</button>
+                <button type="button" id="edit-project-btn" class="icon-btn" title="Edit Project">✏️</button>
+                <button type="button" id="delete-project-btn" class="icon-btn danger" title="Delete Project">🗑️</button>
+            </div>
+        </div>
+        
+        <!-- Chat History -->
+        <div class="chat-history-section">
+            <div class="chat-history-header">
+                <h3>💬 Chat History</h3>
+                <button type="button" id="clear-history-btn" class="icon-btn danger" title="Clear All History">🗑️</button>
+            </div>
+            <div id="chat-history-list" class="chat-history-list">
+                <p class="no-chats">No chat history</p>
+            </div>
+        </div>
+    </aside>
+
     <div class="container">
         <header>
+            <button type="button" id="show-sidebar-btn" class="show-sidebar-btn" title="Show Sidebar">
+                ☰
+            </button>
             <h1>🤖 AI Agent</h1>
             <p class="subtitle">Powered by LangGraph</p>
             <div class="header-buttons">
                 <button type="button" id="mcp-btn" class="mcp-btn" title="Manage MCP Servers">
                     🔌 MCP
                 </button>
-                <button type="button" id="new-chat-btn" class="new-chat-btn hidden">
+                <button type="button" id="new-chat-btn" class="new-chat-btn">
                     + New Chat
                 </button>
             </div>
@@ -29,15 +69,29 @@
 
             <!-- Input Section (always visible at bottom) -->
             <form id="chat-form" class="input-section" onsubmit="return false;">
-                <textarea 
-                    id="prompt-input" 
-                    placeholder="Enter your request... (e.g., 'Search for the latest news about AI and write a summary')"
-                    rows="2"
-                ></textarea>
-                <button type="button" id="generate-btn">
-                    <span class="btn-text">Send</span>
-                    <span class="btn-loader hidden"></span>
-                </button>
+                <div class="input-controls">
+                    <div class="mode-selector">
+                        <select id="mode-select" title="Generation Mode">
+                            <option value="auto">🔄 Auto</option>
+                            <option value="simple">⚡ Simple</option>
+                            <option value="agent">🤖 Agent</option>
+                        </select>
+                    </div>
+                    <textarea 
+                        id="prompt-input" 
+                        placeholder="Enter your request... (e.g., 'Search for the latest news about AI and write a summary')"
+                        rows="2"
+                    ></textarea>
+                    <button type="button" id="generate-btn">
+                        <span class="btn-text">Send</span>
+                        <span class="btn-loader hidden"></span>
+                    </button>
+                </div>
+                <div class="mode-hint" id="mode-hint">
+                    <span class="hint-auto">Auto mode: detects task complexity automatically</span>
+                    <span class="hint-simple" style="display:none">Simple mode: direct response, single tool use</span>
+                    <span class="hint-agent" style="display:none">Agent mode: multi-step planning and execution</span>
+                </div>
             </form>
         </main>
 
@@ -92,6 +146,70 @@
         </div>
     </div>
 
-    <script src="app.js"></script>
+    <!-- Project Modal -->
+    <div id="project-modal" class="modal hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="project-modal-title">📁 New Project</h2>
+                <button type="button" class="modal-close" id="project-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="project-name">Project Name</label>
+                    <input type="text" id="project-name" placeholder="My Project" />
+                </div>
+                <div class="form-group">
+                    <label for="project-description">Description (optional)</label>
+                    <textarea id="project-description" rows="3" placeholder="Project description..."></textarea>
+                </div>
+                <div class="form-actions">
+                    <button type="button" id="project-cancel-btn" class="btn-secondary">Cancel</button>
+                    <button type="button" id="project-save-btn" class="btn-primary">Save Project</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Rename Chat Modal -->
+    <div id="rename-chat-modal" class="modal hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-sm">
+            <div class="modal-header">
+                <h2>✏️ Rename Chat</h2>
+                <button type="button" class="modal-close" id="rename-chat-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="chat-title-input">Chat Title</label>
+                    <input type="text" id="chat-title-input" placeholder="Chat title..." />
+                </div>
+                <div class="form-actions">
+                    <button type="button" id="rename-chat-cancel-btn" class="btn-secondary">Cancel</button>
+                    <button type="button" id="rename-chat-save-btn" class="btn-primary">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Image Preview Modal -->
+    <div id="image-preview-modal" class="modal hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-image">
+            <div class="modal-header">
+                <h2 id="image-preview-title">🖼️ Image Preview</h2>
+                <button type="button" class="modal-close" id="image-preview-close">&times;</button>
+            </div>
+            <div class="modal-body image-preview-body">
+                <img id="image-preview-img" src="" alt="Preview" />
+            </div>
+            <div class="modal-footer">
+                <button type="button" id="image-preview-download" class="btn-primary">⬇️ Download</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Use /static/ prefix when served from FastAPI backend -->
+    <script src="/static/app.js"></script>
 </body>
 </html>
